@@ -1,11 +1,14 @@
 const express = require("express");
 const cloudinary = require("cloudinary").v2;
+const multer = require("multer");
 
 const app = express();
 
 /* ---------- Middleware ---------- */
-app.use(express.json({ limit: "5mb" }));
+app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true }));
+
+const upload = multer({ storage: multer.memoryStorage() });
 
 /* ---------- Cloudinary Config ---------- */
 cloudinary.config({
@@ -14,22 +17,31 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET
 });
 
-/* ---------- Health Check (optional) ---------- */
+/* ---------- Health Check ---------- */
 app.get("/", (req, res) => {
   res.send("Wattmon server is running");
 });
 
-/* ---------- Wattmon Upload Endpoint ---------- */
-app.post("/upload", async (req, res) => {
+/* ---------- Unified Upload Endpoint ---------- */
+app.post("/upload", upload.single("file"), async (req, res) => {
   try {
-    const receivedData = req.body;
+    let fileBuffer;
+    let mimeType;
 
-    // Convert received JSON to string
-    const jsonString = JSON.stringify(receivedData, null, 2);
+    // CASE 1: File sent (CSV / JSON file)
+    if (req.file) {
+      fileBuffer = req.file.buffer;
+      mimeType = req.file.mimetype;
+    }
+    // CASE 2: Raw JSON sent
+    else {
+      const jsonString = JSON.stringify(req.body, null, 2);
+      fileBuffer = Buffer.from(jsonString);
+      mimeType = "application/json";
+    }
 
-    // Upload JSON as RAW file to Cloudinary
     await cloudinary.uploader.upload(
-      `data:application/json;base64,${Buffer.from(jsonString).toString("base64")}`,
+      `data:${mimeType};base64,${fileBuffer.toString("base64")}`,
       {
         resource_type: "raw",
         folder: "wattmon-data",
@@ -37,13 +49,13 @@ app.post("/upload", async (req, res) => {
       }
     );
 
-    // IMPORTANT: Wattmon expects exactly "OK"
+    // Wattmon requirement
     return res.status(200).send("OK");
 
   } catch (error) {
-    console.error("Error while uploading data:", error);
+    console.error("Upload error:", error);
 
-    // Still return OK (Wattmon requirement)
+    // Still return OK
     return res.status(200).send("OK");
   }
 });
@@ -53,5 +65,3 @@ const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
-
-
